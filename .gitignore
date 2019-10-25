@@ -1,3 +1,9 @@
+# Project dirs
+inputs/*
+!inputs/.keep_this_dir
+results/*
+!results/.keep_this_dir
+
 # Prerequisites
 *.d
 
