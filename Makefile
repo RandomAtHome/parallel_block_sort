@@ -11,3 +11,9 @@ $(TARGETS): main.o
 .PHONY: clean
 clean:
 	rm -f ./*.o $(TARGETS) ./*.vg.log
+
+reset_table:
+	echo "NumberCount	RSeed	UsedBitsCount	PreGeneration	Generation	SendingSortSignal	TotalSortTime	OrderCheckTime" > sort_results.tsv
+
+show_table:
+	column -t sort_results.tsv
