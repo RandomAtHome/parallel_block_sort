@@ -77,6 +77,7 @@ int main(int argc, char * argv[]){
         }
         bits_to_use = CHAR_BIT*sizeof(long)/2;
     }
+    log_uint(log_file, (unsigned int)NET_SIZE);
     log_uint(log_file, NUMBER_COUNT);
     log_uint(log_file, rseed);
     log_uint(log_file, bits_to_use);
