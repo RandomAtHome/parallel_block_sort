@@ -55,22 +55,37 @@ int is_sorted(unsigned long* buffer, size_t count) {
 }
 
 int main(int argc, char * argv[]){
+    /*format is
+        ./EXEC config loops_per_input_count steps_count step_size
+    */
+    if (argc != 5) {
+        return 0;
+    }
     int NET_SIZE, RANK;
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &RANK);
     MPI_Comm_size(MPI_COMM_WORLD, &NET_SIZE);
     int loop_count = 1;
-    if (argc == 3) {
-        sscanf(argv[2], "%d", &loop_count);
-        if (loop_count < 1) {
-            if (RANK == 0) {
-                fprintf(stderr, "Loops count is negative, setting it to 1\n");
-            }
-            loop_count = 1;
+    int step_size = 0;
+    int steps_count = 0;
+    sscanf(argv[2], "%d", &loop_count);
+    if (loop_count < 1) {
+        if (RANK == 0) {
+            fprintf(stderr, "Loops count is negative, setting it to 1\n");
         }
+        loop_count = 1;
+    }
+    sscanf(argv[3], "%d", &steps_count);
+    sscanf(argv[4], "%d", &step_size);
+    if (steps_count < 0) {
+        if (RANK == 0) {
+            fprintf(stderr, "steps count is negative, setting it to 0\n");
+        }
+        steps_count = 0;
     }
     srand(time(NULL));
-    while (loop_count--) {
+
+    for (int step = 0, loop_number = loop_count; step < steps_count; loop_number = loop_count, step++) while (loop_number--) {
         MPI_Barrier(MPI_COMM_WORLD);
         message_pos = 0;
         const double START_TIME = MPI_Wtime();
@@ -98,6 +113,7 @@ int main(int argc, char * argv[]){
             }
             bits_to_use = CHAR_BIT*sizeof(long)/2;
         }
+        NUMBER_COUNT += step * step_size;
         log_uint((unsigned int)NET_SIZE);
         log_uint(NUMBER_COUNT);
         log_uint(rseed);
