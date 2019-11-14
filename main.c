@@ -59,114 +59,128 @@ int main(int argc, char * argv[]){
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &RANK);
     MPI_Comm_size(MPI_COMM_WORLD, &NET_SIZE);
-    message_pos = 0;
-    const double START_TIME = MPI_Wtime();
-    double last_time = START_TIME;
-    const char* config_filename = argv[1] ? argv[1] : INPUTFILE;
-    FILE *log_file = NULL;
-    if (RANK == 0) {
-        log_file = fopen(RESULT_FILENAME, "a");
-    }
-    FILE *config_file = fopen(config_filename, "r");
-    if (!config_file) {
-        if (RANK == 0) fprintf(stderr, "Not valid config path: %s \nExiting...\n", config_filename);
-        MPI_Finalize();
-        exit(0);
-    }
-    unsigned int rseed = 0, bits_to_use, NUMBER_COUNT;
-    fscanf(config_file, "%u%u%u", &NUMBER_COUNT, &rseed, &bits_to_use);
-    fclose(config_file);
-    if (!rseed) {
-        rseed = time(NULL);
-    }
-    if (bits_to_use > CHAR_BIT*sizeof(long) || bits_to_use == 0) {
-        if (RANK == 0) {
-            fprintf(stderr, "Can't use %u bits, using %zu\n", bits_to_use, CHAR_BIT*sizeof(long)/2);
-        }
-        bits_to_use = CHAR_BIT*sizeof(long)/2;
-    }
-    log_uint((unsigned int)NET_SIZE);
-    log_uint(NUMBER_COUNT);
-    log_uint(rseed);
-    log_uint(bits_to_use);
-    unsigned int offset = CHAR_BIT*sizeof(long) - bits_to_use;
-    unsigned long block_size = -1;
-    if (bits_to_use == CHAR_BIT*sizeof(long)) {
-        block_size = (1ull << (bits_to_use - 1)) / (NET_SIZE >> 1); // hack to avoid going over range 
-    } else {
-        block_size = (1ull << bits_to_use) / NET_SIZE; //this will be needed when we send all this to different proccesses
-    }
-    size_t allocated_count = NUMBER_COUNT / (RANK ? NET_SIZE : 1);
-    unsigned long *int_storage = malloc(allocated_count * sizeof(unsigned long)); // surprise ternary inside
-    int *recvcounts = RANK ? NULL : calloc(NET_SIZE, sizeof(int));
-    int *displs = RANK ? NULL : calloc(NET_SIZE, sizeof(int));
-    size_t received_numbers_count = 0;
-    if (RANK == 0) {
-        printf("[%lf]\tStarted generating numbers... %u total to generate, Rseed = %u, bits used = %u\n", MPI_Wtime() - START_TIME, NUMBER_COUNT, rseed, bits_to_use);
-        last_time = log_time(last_time);
-        srandom(rseed);
-        unsigned int numbers_left = NUMBER_COUNT;
-        while (numbers_left--) {
-            unsigned long new_number = random();
-            new_number >>= offset; // this is to impose some kind of range for generated numbers
-            int receiver = new_number / block_size;
-            recvcounts[receiver]++;
-            if (receiver == 0) {
-                int_storage[received_numbers_count++] = new_number;
-            } else {
-                MPI_Send(&new_number, 1, MPI_UNSIGNED_LONG, receiver, Number, MPI_COMM_WORLD);
+    int loop_count = 1;
+    if (argc == 3) {
+        sscanf(argv[2], "%d", &loop_count);
+        if (loop_count < 1) {
+            if (RANK == 0) {
+                fprintf(stderr, "Loops count is negative, setting it to 1\n");
             }
+            loop_count = 1;
         }
-        printf("[%lf]\tAll numbers generated! Sending start signal\n", MPI_Wtime() - START_TIME);
-        last_time = log_time(last_time);
-        for (int receiver = 1; receiver < NET_SIZE; receiver++) {
-            MPI_Send(&numbers_left, 1, MPI_UNSIGNED_LONG, receiver, Stop, MPI_COMM_WORLD);
+    }
+    srand(time(NULL));
+    while (loop_count--) {
+        MPI_Barrier(MPI_COMM_WORLD);
+        message_pos = 0;
+        const double START_TIME = MPI_Wtime();
+        double last_time = START_TIME;
+        const char* config_filename = argv[1] ? argv[1] : INPUTFILE;
+        FILE *log_file = NULL;
+        if (RANK == 0) {
+            log_file = fopen(RESULT_FILENAME, "a");
         }
-
-    } else {
-        unsigned long received_number;
-        MPI_Status status;
-        MPI_Recv(&received_number, 1, MPI_UNSIGNED_LONG, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status); // we use Tag to differ types of received message
-        while (status.MPI_TAG != Stop) {
-            if (received_numbers_count == allocated_count) {
-                unsigned long * temp = realloc(int_storage, (allocated_count += REALLOC_STEP) * sizeof(unsigned long));
-                if (!temp) {
-                    fprintf(stderr, "Out of memory on %d, cur element count %zu\n", RANK, received_numbers_count);
+        FILE *config_file = fopen(config_filename, "r");
+        if (!config_file) {
+            if (RANK == 0) fprintf(stderr, "Not valid config path: %s \nExiting...\n", config_filename);
+            MPI_Finalize();
+            exit(0);
+        }
+        unsigned int rseed = 0, bits_to_use, NUMBER_COUNT;
+        fscanf(config_file, "%u%u%u", &NUMBER_COUNT, &rseed, &bits_to_use);
+        fclose(config_file);
+        if (!rseed) {
+            rseed = rand();
+        }
+        if (bits_to_use > CHAR_BIT*sizeof(long) || bits_to_use == 0) {
+            if (RANK == 0) {
+                fprintf(stderr, "Can't use %u bits, using %zu\n", bits_to_use, CHAR_BIT*sizeof(long)/2);
+            }
+            bits_to_use = CHAR_BIT*sizeof(long)/2;
+        }
+        log_uint((unsigned int)NET_SIZE);
+        log_uint(NUMBER_COUNT);
+        log_uint(rseed);
+        log_uint(bits_to_use);
+        unsigned int offset = CHAR_BIT*sizeof(long) - bits_to_use;
+        unsigned long block_size = -1;
+        if (bits_to_use == CHAR_BIT*sizeof(long)) {
+            block_size = (1ull << (bits_to_use - 1)) / (NET_SIZE >> 1); // hack to avoid going over range 
+        } else {
+            block_size = (1ull << bits_to_use) / NET_SIZE; //this will be needed when we send all this to different proccesses
+        }
+        size_t allocated_count = NUMBER_COUNT / (RANK ? NET_SIZE : 1);
+        unsigned long *int_storage = malloc(allocated_count * sizeof(unsigned long)); // surprise ternary inside
+        int *recvcounts = RANK ? NULL : calloc(NET_SIZE, sizeof(int));
+        int *displs = RANK ? NULL : calloc(NET_SIZE, sizeof(int));
+        size_t received_numbers_count = 0;
+        if (RANK == 0) {
+            printf("[%lf]\tStarted generating numbers... %u total to generate, Rseed = %u, bits used = %u\n", MPI_Wtime() - START_TIME, NUMBER_COUNT, rseed, bits_to_use);
+            last_time = log_time(last_time);
+            srandom(rseed);
+            unsigned int numbers_left = NUMBER_COUNT;
+            while (numbers_left--) {
+                unsigned long new_number = random();
+                new_number >>= offset; // this is to impose some kind of range for generated numbers
+                int receiver = new_number / block_size;
+                recvcounts[receiver]++;
+                if (receiver == 0) {
+                    int_storage[received_numbers_count++] = new_number;
                 } else {
-                    int_storage = temp;
+                    MPI_Send(&new_number, 1, MPI_UNSIGNED_LONG, receiver, Number, MPI_COMM_WORLD);
                 }
             }
-            int_storage[received_numbers_count++] = received_number;
-            MPI_Recv(&received_number, 1, MPI_UNSIGNED_LONG, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-        }
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
-    if (RANK == 0) printf("[%lf]\tSent all start signals, began sort\n", MPI_Wtime() - START_TIME);
-    last_time = log_time(last_time);
-    qsort(int_storage, received_numbers_count, sizeof(unsigned long), comparator); //FIXME: change to typeof()?
-    // lower common part
-    if (RANK == 0) {
-        for (int i = 1; i < NET_SIZE; i++) {
-            displs[i] = displs[i-1] + recvcounts[i-1];
-        }
-    }
-    MPI_Gatherv(int_storage, received_numbers_count, MPI_UNSIGNED_LONG, int_storage, recvcounts, displs, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
-    last_time = log_time(last_time);
-    if (RANK == 0) {
-        printf("[%lf]\tGathered all numbers from all proccesses! Start the check of final array...\t", MPI_Wtime() - START_TIME);
-        if (is_sorted(int_storage, NUMBER_COUNT)) {
-            printf("Result array is sorted!\n");
+            printf("[%lf]\tAll numbers generated! Sending start signal\n", MPI_Wtime() - START_TIME);
+            last_time = log_time(last_time);
+            for (int receiver = 1; receiver < NET_SIZE; receiver++) {
+                MPI_Send(&numbers_left, 1, MPI_UNSIGNED_LONG, receiver, Stop, MPI_COMM_WORLD);
+            }
+
         } else {
-            printf("The result is wrong\n");
+            unsigned long received_number;
+            MPI_Status status;
+            MPI_Recv(&received_number, 1, MPI_UNSIGNED_LONG, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status); // we use Tag to differ types of received message
+            while (status.MPI_TAG != Stop) {
+                if (received_numbers_count == allocated_count) {
+                    unsigned long * temp = realloc(int_storage, (allocated_count += REALLOC_STEP) * sizeof(unsigned long));
+                    if (!temp) {
+                        fprintf(stderr, "Out of memory on %d, cur element count %zu\n", RANK, received_numbers_count);
+                    } else {
+                        int_storage = temp;
+                    }
+                }
+                int_storage[received_numbers_count++] = received_number;
+                MPI_Recv(&received_number, 1, MPI_UNSIGNED_LONG, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+            }
         }
-        printf("[%lf]\tFinished! Cleaning up...\n", MPI_Wtime() - START_TIME);
+        MPI_Barrier(MPI_COMM_WORLD);
+        if (RANK == 0) printf("[%lf]\tSent all start signals, began sort\n", MPI_Wtime() - START_TIME);
+        last_time = log_time(last_time);
+        qsort(int_storage, received_numbers_count, sizeof(unsigned long), comparator); //FIXME: change to typeof()?
+        // lower common part
+        if (RANK == 0) {
+            for (int i = 1; i < NET_SIZE; i++) {
+                displs[i] = displs[i-1] + recvcounts[i-1];
+            }
+        }
+        MPI_Gatherv(int_storage, received_numbers_count, MPI_UNSIGNED_LONG, int_storage, recvcounts, displs, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
+        last_time = log_time(last_time);
+        if (RANK == 0) {
+            printf("[%lf]\tGathered all numbers from all proccesses! Start the check of final array...\t", MPI_Wtime() - START_TIME);
+            if (is_sorted(int_storage, NUMBER_COUNT)) {
+                printf("Result array is sorted!\n");
+            } else {
+                printf("The result is wrong\n");
+            }
+            printf("[%lf]\tFinished! Cleaning up...\n", MPI_Wtime() - START_TIME);
+        }
+        log_time(last_time);
+        log_time(START_TIME);
+        safe_free(int_storage);
+        safe_free(recvcounts);
+        safe_free(displs);
+        finish_log_line(log_file);
     }
-    log_time(last_time);
-    log_time(START_TIME);
-    safe_free(int_storage);
-    safe_free(recvcounts);
-    safe_free(displs);
-    finish_log_line(log_file);
     MPI_Finalize();
     return 0;
 }
