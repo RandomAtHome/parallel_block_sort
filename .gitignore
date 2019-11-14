@@ -1,8 +1,4 @@
 # Project dirs
-inputs/*
-!inputs/.keep_this_dir
-results/*
-!results/.keep_this_dir
 configs/*
 !configs/README.md
 sort_results.tsv
