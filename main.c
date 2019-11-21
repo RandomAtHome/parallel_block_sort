@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <limits.h>
 #include <time.h>
+#include <sys/random.h>
 #include <stdlib.h>
 #include "mpi.h"
 /*
@@ -30,6 +31,16 @@ double log_time(double last_time) {
 
 void log_uint(unsigned int a) {
     message_pos += sprintf(STATS_MESSAGE+message_pos, "%u\t", a);
+}
+
+void log_int_array_as_json(const int *array, size_t size) {
+    if (array) {
+        message_pos += sprintf(STATS_MESSAGE+message_pos, "{");
+        for (size_t i = 0; i < size; i++) {
+            message_pos += sprintf(STATS_MESSAGE+message_pos, "%d,", array[i]);
+        }
+        message_pos += sprintf(STATS_MESSAGE+message_pos, "}\t");
+    }
 }
 
 void finish_log_line(FILE *file) {
@@ -125,6 +136,9 @@ int main(int argc, char * argv[]){
         } else {
             block_size = (1ull << bits_to_use) / NET_SIZE; //this will be needed when we send all this to different proccesses
         }
+        if (RANK == 0) {
+            printf("[%lf]\tOffset = %u; block_size = %lu\n", MPI_Wtime() - START_TIME, offset, block_size);
+        }
         size_t allocated_count = NUMBER_COUNT / (RANK ? NET_SIZE : 1);
         unsigned long *int_storage = malloc(allocated_count * sizeof(unsigned long)); // surprise ternary inside
         int *recvcounts = RANK ? NULL : calloc(NET_SIZE, sizeof(int));
@@ -136,7 +150,11 @@ int main(int argc, char * argv[]){
             srandom(rseed);
             unsigned int numbers_left = NUMBER_COUNT;
             while (numbers_left--) {
-                unsigned long new_number = random();
+                unsigned long new_number = 0;
+                for (int i = 0; i < sizeof(unsigned long); i += 2) {
+                    new_number <<= 2*CHAR_BIT;
+                    new_number |= (random() & 0xffff);
+                }
                 new_number >>= offset; // this is to impose some kind of range for generated numbers
                 int receiver = new_number / block_size;
                 recvcounts[receiver]++;
@@ -192,6 +210,7 @@ int main(int argc, char * argv[]){
         }
         log_time(last_time);
         log_time(START_TIME);
+        log_int_array_as_json(recvcounts, NET_SIZE);
         safe_free(int_storage);
         safe_free(recvcounts);
         safe_free(displs);
