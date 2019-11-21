@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <limits.h>
 #include <time.h>
-#include <sys/random.h>
 #include <stdlib.h>
 #include "mpi.h"
 /*
