@@ -124,16 +124,18 @@ int main(int argc, char * argv[]){
             bits_to_use = CHAR_BIT*sizeof(long)/2;
         }
         NUMBER_COUNT += step * step_size;
-        log_uint((unsigned int)NET_SIZE);
-        log_uint(NUMBER_COUNT);
-        log_uint(rseed);
-        log_uint(bits_to_use);
+        log_uint((unsigned int)NET_SIZE); //NetSize
+        log_uint(NUMBER_COUNT); //NumberCount
+        log_uint(rseed); //RSeed
+        log_uint(bits_to_use); //UsedBitsCount
         unsigned int offset = CHAR_BIT*sizeof(long) - bits_to_use;
         unsigned long block_size = -1;
-        if (bits_to_use == CHAR_BIT*sizeof(long)) {
-            block_size = (1ull << (bits_to_use - 1)) / (NET_SIZE >> 1); // hack to avoid going over range 
-        } else {
-            block_size = (1ull << bits_to_use) / NET_SIZE; //this will be needed when we send all this to different proccesses
+        if (NET_SIZE != 1) {
+            if (bits_to_use == CHAR_BIT*sizeof(long)) {
+                block_size = (1ull << (bits_to_use - 1)) / (NET_SIZE >> 1); // hack to avoid going over range 
+            } else {
+                block_size = (1ull << bits_to_use) / NET_SIZE; //this will be needed when we send all this to different proccesses
+            }
         }
         if (RANK == 0) {
             printf("[%lf]\tOffset = %u; block_size = %lu\n", MPI_Wtime() - START_TIME, offset, block_size);
@@ -145,7 +147,7 @@ int main(int argc, char * argv[]){
         size_t received_numbers_count = 0;
         if (RANK == 0) {
             printf("[%lf]\tStarted generating numbers... %u total to generate, Rseed = %u, bits used = %u\n", MPI_Wtime() - START_TIME, NUMBER_COUNT, rseed, bits_to_use);
-            last_time = log_time(last_time);
+            last_time = log_time(last_time); //PreGeneration
             srandom(rseed);
             unsigned int numbers_left = NUMBER_COUNT;
             while (numbers_left--) {
@@ -164,7 +166,7 @@ int main(int argc, char * argv[]){
                 }
             }
             printf("[%lf]\tAll numbers generated! Sending start signal\n", MPI_Wtime() - START_TIME);
-            last_time = log_time(last_time);
+            last_time = log_time(last_time); //SendingSortSignal
             for (int receiver = 1; receiver < NET_SIZE; receiver++) {
                 MPI_Send(&numbers_left, 1, MPI_UNSIGNED_LONG, receiver, Stop, MPI_COMM_WORLD);
             }
@@ -188,7 +190,7 @@ int main(int argc, char * argv[]){
         }
         MPI_Barrier(MPI_COMM_WORLD);
         if (RANK == 0) printf("[%lf]\tSent all start signals, began sort\n", MPI_Wtime() - START_TIME);
-        last_time = log_time(last_time);
+        last_time = log_time(last_time); // SendingSortSignal
         qsort(int_storage, received_numbers_count, sizeof(unsigned long), comparator); //FIXME: change to typeof()?
         // lower common part
         if (RANK == 0) {
@@ -197,7 +199,7 @@ int main(int argc, char * argv[]){
             }
         }
         MPI_Gatherv(int_storage, received_numbers_count, MPI_UNSIGNED_LONG, int_storage, recvcounts, displs, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
-        last_time = log_time(last_time);
+        last_time = log_time(last_time); //TotalSortTime (including collection back)!
         if (RANK == 0) {
             printf("[%lf]\tGathered all numbers from all proccesses! Start the check of final array...\t", MPI_Wtime() - START_TIME);
             if (is_sorted(int_storage, NUMBER_COUNT)) {
@@ -207,9 +209,9 @@ int main(int argc, char * argv[]){
             }
             printf("[%lf]\tFinished! Cleaning up...\n", MPI_Wtime() - START_TIME);
         }
-        log_time(last_time);
-        log_time(START_TIME);
-        log_int_array_as_json(recvcounts, NET_SIZE);
+        log_time(last_time); //OrderCheckTime
+        log_time(START_TIME); //TotalRunTime
+        log_int_array_as_json(recvcounts, NET_SIZE); //NumbersDistribution
         safe_free(int_storage);
         safe_free(recvcounts);
         safe_free(displs);
