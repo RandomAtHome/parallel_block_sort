@@ -8,7 +8,7 @@ We are going to use random at first, for not uniform distribution,
 but then try out mrand48
 */
 
-enum DataType {Number, Stop};
+enum DataType {Count, Numbers};
 
 const char INPUTFILE[] = "default.in";
 const char RESULT_FILENAME[] = "sort_results.tsv";
@@ -40,6 +40,20 @@ void log_int_array_as_json(const int *array, size_t size) {
         }
         message_pos += sprintf(STATS_MESSAGE+message_pos, "}\t");
     }
+}
+
+void printf_ulong_array(const unsigned long *array, size_t size) {
+    for (int i = 0; i < size; i++) {
+        printf("%lu, ", array[i]);
+    }
+    printf("\n");
+}
+
+void printf_int_array(const int *array, size_t size) {
+    for (int i = 0; i < size; i++) {
+        printf("%d, ", array[i]);
+    }
+    printf("\n");
 }
 
 void finish_log_line(FILE *file) {
@@ -140,15 +154,22 @@ int main(int argc, char * argv[]){
         if (RANK == 0) {
             printf("[%lf]\tOffset = %u; block_size = %lu\n", MPI_Wtime() - START_TIME, offset, block_size);
         }
-        size_t allocated_count = NUMBER_COUNT / (RANK ? NET_SIZE : 1);
-        unsigned long *int_storage = malloc(allocated_count * sizeof(unsigned long)); // surprise ternary inside
+        size_t allocated_count = NUMBER_COUNT / NET_SIZE;
+        unsigned long *int_storage = NULL; // will handle this inside of routines
         int *recvcounts = RANK ? NULL : calloc(NET_SIZE, sizeof(int));
         int *displs = RANK ? NULL : calloc(NET_SIZE, sizeof(int));
+        unsigned long ** out_storages = RANK ? NULL : malloc(NET_SIZE * sizeof(unsigned long *));
+        size_t * storages_sizes = RANK ? NULL : malloc(NET_SIZE * sizeof(size_t));    
         size_t received_numbers_count = 0;
         if (RANK == 0) {
             printf("[%lf]\tStarted generating numbers... %u total to generate, Rseed = %u, bits used = %u\n", MPI_Wtime() - START_TIME, NUMBER_COUNT, rseed, bits_to_use);
             last_time = log_time(last_time); //PreGeneration
             srandom(rseed);
+            for (int receiver = 0; receiver < NET_SIZE; receiver++) {
+                out_storages[receiver] = malloc(allocated_count * sizeof(unsigned long));
+                storages_sizes[receiver] = allocated_count;
+            }
+            //int_storage == out_storages[0]; //in reality we don't send to ourself
             unsigned int numbers_left = NUMBER_COUNT;
             while (numbers_left--) {
                 unsigned long new_number = 0;
@@ -158,44 +179,53 @@ int main(int argc, char * argv[]){
                 }
                 new_number >>= offset; // this is to impose some kind of range for generated numbers
                 int receiver = new_number / block_size;
-                recvcounts[receiver]++;
-                if (receiver == 0) {
-                    int_storage[received_numbers_count++] = new_number;
-                } else {
-                    MPI_Send(&new_number, 1, MPI_UNSIGNED_LONG, receiver, Number, MPI_COMM_WORLD);
-                }
-            }
-            printf("[%lf]\tAll numbers generated! Sending start signal\n", MPI_Wtime() - START_TIME);
-            last_time = log_time(last_time); //SendingSortSignal
-            for (int receiver = 1; receiver < NET_SIZE; receiver++) {
-                MPI_Send(&numbers_left, 1, MPI_UNSIGNED_LONG, receiver, Stop, MPI_COMM_WORLD);
-            }
-
-        } else {
-            unsigned long received_number;
-            MPI_Status status;
-            MPI_Recv(&received_number, 1, MPI_UNSIGNED_LONG, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status); // we use Tag to differ types of received message
-            while (status.MPI_TAG != Stop) {
-                if (received_numbers_count == allocated_count) {
-                    unsigned long * temp = realloc(int_storage, (allocated_count += REALLOC_STEP) * sizeof(unsigned long));
+                if (recvcounts[receiver] == storages_sizes[receiver]) {
+                    unsigned long * temp = realloc(out_storages[receiver], (storages_sizes[receiver] += REALLOC_STEP) * sizeof(unsigned long));
                     if (!temp) {
                         fprintf(stderr, "Out of memory on %d, cur element count %zu\n", RANK, received_numbers_count);
                     } else {
-                        int_storage = temp;
+                        out_storages[receiver] = temp;
                     }
                 }
-                int_storage[received_numbers_count++] = received_number;
-                MPI_Recv(&received_number, 1, MPI_UNSIGNED_LONG, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+                out_storages[receiver][recvcounts[receiver]++] = new_number; // RIP locality
             }
+            printf("[%lf]\tAll numbers generated! Sending start signal\n", MPI_Wtime() - START_TIME);
+            last_time = log_time(last_time); //SendingSortSignal
+            MPI_Request flush;
+            for (int receiver = 1; receiver < NET_SIZE; receiver++) {
+                MPI_Isend(&recvcounts[receiver], 1, MPI_INT, receiver, Count, MPI_COMM_WORLD, &flush);
+                MPI_Isend(out_storages[receiver], recvcounts[receiver], MPI_UNSIGNED_LONG, receiver, Numbers, MPI_COMM_WORLD, &flush);
+                //MPI_Send(&numbers_left, 1, MPI_UNSIGNED_LONG, receiver, Stop, MPI_COMM_WORLD);
+            }
+            int_storage = out_storages[0];
+            free(storages_sizes);
+            received_numbers_count = recvcounts[0];
+        } else {
+            int numbers_count;
+            MPI_Status flush;
+            MPI_Recv(&numbers_count, 1, MPI_INT, 0, Count, MPI_COMM_WORLD, &flush); // we use Tag to differ types of received message
+            int_storage = realloc(int_storage, numbers_count * sizeof(unsigned long));
+            MPI_Recv(int_storage, numbers_count, MPI_UNSIGNED_LONG, 0, Numbers, MPI_COMM_WORLD, &flush);
+            received_numbers_count = numbers_count;
         }
         MPI_Barrier(MPI_COMM_WORLD);
-        if (RANK == 0) printf("[%lf]\tSent all start signals, began sort\n", MPI_Wtime() - START_TIME);
+        if (RANK == 0) {
+            printf("[%lf]\tSent all start signals, began sort\n", MPI_Wtime() - START_TIME);
+        }
         last_time = log_time(last_time); // SendingSortSignal
         qsort(int_storage, received_numbers_count, sizeof(unsigned long), comparator); //FIXME: change to typeof()?
         // lower common part
         if (RANK == 0) {
             for (int i = 1; i < NET_SIZE; i++) {
+                free(out_storages[i]);
                 displs[i] = displs[i-1] + recvcounts[i-1];
+            }
+            free(out_storages);
+            unsigned long * temp = realloc(int_storage, NUMBER_COUNT * sizeof(unsigned long));
+            if (!temp) {
+                fprintf(stderr, "Out of memory on %d, cur element count %zu\n", RANK, received_numbers_count);
+            } else {
+                int_storage = temp;
             }
         }
         MPI_Gatherv(int_storage, received_numbers_count, MPI_UNSIGNED_LONG, int_storage, recvcounts, displs, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
