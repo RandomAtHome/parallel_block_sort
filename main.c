@@ -68,9 +68,10 @@ int comparator(const void * a, const void * b) {
     return (*(unsigned long*)a > *(unsigned long*)b) ? 1 : -1;
 }
 
-int is_sorted(unsigned long* buffer, size_t count) {
+int is_sorted(const unsigned long* buffer, size_t count) {
     /*true (1) if good, false (0) else*/
-    while (--count) {
+    while (count) {
+        count--;
         if (buffer[count] < buffer[count - 1]) {
             return 0;
         }
