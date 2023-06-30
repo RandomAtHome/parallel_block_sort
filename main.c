@@ -70,8 +70,7 @@ int comparator(const void * a, const void * b) {
 
 int is_sorted(const unsigned long* buffer, size_t count) {
     /*true (1) if good, false (0) else*/
-    while (count) {
-        count--;
+    while (count--) {
         if (buffer[count] < buffer[count - 1]) {
             return 0;
         }
